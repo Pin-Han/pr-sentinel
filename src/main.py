@@ -2,9 +2,9 @@ import asyncio
 import logging
 import os
 
-import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from google import genai
 
 from src.agent.graph import build_graph
 from src.github.client import GitHubClient
@@ -22,7 +22,7 @@ app = FastAPI(title="PR Sentinel", version="0.1.0")
 
 # Global state
 _github: GitHubClient | None = None
-_llm: anthropic.AsyncAnthropic | None = None
+_llm: genai.Client | None = None
 _graph = None
 
 # In-flight review tracking for deduplication
@@ -36,7 +36,7 @@ async def startup() -> None:
 
     github_token = os.environ["GITHUB_TOKEN"]
     _github = GitHubClient(github_token)
-    _llm = anthropic.AsyncAnthropic()
+    _llm = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
     _graph = build_graph(_github, _llm)
     logger.info("PR Sentinel started")
 

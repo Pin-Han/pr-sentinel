@@ -1,6 +1,6 @@
 import functools
 
-import anthropic
+from google import genai
 from langgraph.graph import END, StateGraph
 
 from src.agent.nodes import analyze_code, fetch_diff, format_review, post_review
@@ -8,7 +8,7 @@ from src.agent.state import PRReviewState
 from src.github.client import GitHubClient
 
 
-def build_graph(github: GitHubClient, llm: anthropic.AsyncAnthropic) -> StateGraph:
+def build_graph(github: GitHubClient, llm: genai.Client) -> StateGraph:
     """Build the Phase 1 PR review graph (linear flow).
 
     fetch_diff → analyze_code → format_review → post_review

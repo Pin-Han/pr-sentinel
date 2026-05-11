@@ -1,8 +1,9 @@
 import logging
 
-import anthropic
+from google import genai
+from google.genai import types
 
-from src.agent.prompts import ANALYZE_SYSTEM, ANALYZE_TOOL, ANALYZE_USER
+from src.agent.prompts import ANALYZE_SYSTEM, ANALYZE_TOOL, ANALYZE_TOOL_CONFIG, ANALYZE_USER
 from src.agent.state import PRReviewState
 from src.github.client import GitHubClient
 from src.github.diff import process_diff
@@ -25,8 +26,8 @@ async def fetch_diff(state: PRReviewState, *, github: GitHubClient) -> dict:
     }
 
 
-async def analyze_code(state: PRReviewState, *, llm: anthropic.AsyncAnthropic) -> dict:
-    """Analyze the diff using Claude Haiku with tool_use for structured output."""
+async def analyze_code(state: PRReviewState, *, llm: genai.Client) -> dict:
+    """Analyze the diff using Gemini with function calling for structured output."""
     user_prompt = ANALYZE_USER.format(
         pr_title=state["pr_title"],
         pr_description=state.get("pr_description", ""),
@@ -34,25 +35,27 @@ async def analyze_code(state: PRReviewState, *, llm: anthropic.AsyncAnthropic) -
         diff=state["diff"],
     )
 
-    response = await llm.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=ANALYZE_SYSTEM,
-        tools=[ANALYZE_TOOL],
-        tool_choice={"type": "tool", "name": "submit_review"},
-        messages=[{"role": "user", "content": user_prompt}],
+    response = await llm.aio.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=ANALYZE_SYSTEM,
+            tools=[ANALYZE_TOOL],
+            tool_config=ANALYZE_TOOL_CONFIG,
+        ),
     )
 
-    # Extract the tool_use result
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "submit_review":
+    # Extract the function call result
+    for part in response.candidates[0].content.parts:
+        if part.function_call and part.function_call.name == "submit_review":
+            args = part.function_call.args
             return {
-                "issues": block.input.get("issues", []),
-                "suggestions": block.input.get("suggestions", []),
-                "summary": block.input.get("summary", ""),
+                "issues": args.get("issues", []),
+                "suggestions": args.get("suggestions", []),
+                "summary": args.get("summary", ""),
             }
 
-    logger.warning("No tool_use block in LLM response, returning empty analysis")
+    logger.warning("No function call in LLM response, returning empty analysis")
     return {"issues": [], "suggestions": [], "summary": "Analysis could not be completed."}
 
 
