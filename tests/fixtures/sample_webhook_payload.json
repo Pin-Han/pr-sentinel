@@ -1,0 +1,14 @@
+{
+  "action": "opened",
+  "repository": {
+    "full_name": "Pin-Han/test-repo"
+  },
+  "pull_request": {
+    "number": 1,
+    "title": "feat: add user authentication",
+    "body": "Added JWT-based auth with refresh tokens",
+    "head": {
+      "sha": "abc123def456"
+    }
+  }
+}

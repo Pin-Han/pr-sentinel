@@ -1,0 +1,21 @@
+--- a/src/auth.py
++++ b/src/auth.py
+@@ -10,6 +10,15 @@ from fastapi import HTTPException
+
++def verify_token(token: str) -> dict:
++    try:
++        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
++        return payload
++    except jwt.ExpiredSignatureError:
++        raise HTTPException(status_code=401, detail="Token expired")
++    except jwt.InvalidTokenError:
++        raise HTTPException(status_code=401, detail="Invalid token")
++
+--- a/src/routes.py
++++ b/src/routes.py
+@@ -5,3 +5,8 @@ from src.auth import verify_token
+
++@app.get("/profile")
++def get_profile(token: str):
++    user = verify_token(token)
++    return {"user": user}
