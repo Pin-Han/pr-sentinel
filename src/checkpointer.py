@@ -8,8 +8,8 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 logger = logging.getLogger(__name__)
 
 _CANDIDATES = [
-    "/data/checkpoints.db",       # Railway persistent volume
-    "/tmp/checkpoints.db",        # Ephemeral fallback on Railway/containers
+    "/data/checkpoints.db",  # Railway persistent volume
+    "/tmp/checkpoints.db",  # Ephemeral fallback on Railway/containers
 ]
 
 
