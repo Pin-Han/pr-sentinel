@@ -112,12 +112,20 @@ async def _run_review(event: PREvent) -> None:
             event.head_sha,
         )
 
-        # Post acknowledgement comment immediately
-        await _github.post_comment(
-            event.repo_full_name,
-            event.pr_number,
-            "🔍 **PR Sentinel** is reviewing this pull request… Results will be posted shortly.",
-        )
+        # Post acknowledgement comment (best-effort, don't block review)
+        try:
+            await _github.post_comment(
+                event.repo_full_name,
+                event.pr_number,
+                "🔍 **PR Sentinel** is reviewing this pull request… "
+                "Results will be posted shortly.",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to post ack comment on %s #%d (continuing review)",
+                event.repo_full_name,
+                event.pr_number,
+            )
 
         initial_state = {
             "repo": event.repo_full_name,
