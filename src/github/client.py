@@ -67,5 +67,13 @@ class GitHubClient:
         )
         resp.raise_for_status()
 
+    async def post_comment(self, repo: str, pr_number: int, body: str) -> None:
+        """Post a regular comment on a PR (not a review)."""
+        resp = await self._client.post(
+            f"/repos/{repo}/issues/{pr_number}/comments",
+            json={"body": body},
+        )
+        resp.raise_for_status()
+
     async def close(self) -> None:
         await self._client.aclose()

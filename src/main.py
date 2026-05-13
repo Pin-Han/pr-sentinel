@@ -106,7 +106,17 @@ async def _run_review(event: PREvent) -> None:
     key = (event.repo_full_name, event.pr_number)
     try:
         logger.info(
-            "Starting review for %s #%d @ %s", event.repo_full_name, event.pr_number, event.head_sha
+            "Starting review for %s #%d @ %s",
+            event.repo_full_name,
+            event.pr_number,
+            event.head_sha,
+        )
+
+        # Post acknowledgement comment immediately
+        await _github.post_comment(
+            event.repo_full_name,
+            event.pr_number,
+            "🔍 **PR Sentinel** is reviewing this pull request… Results will be posted shortly.",
         )
 
         initial_state = {
