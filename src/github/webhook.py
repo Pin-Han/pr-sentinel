@@ -23,9 +23,7 @@ def verify_signature(payload_body: bytes, signature_header: str | None, secret: 
     if not signature_header:
         raise HTTPException(status_code=401, detail="Missing X-Hub-Signature-256 header")
 
-    expected = "sha256=" + hmac.new(
-        secret.encode(), payload_body, hashlib.sha256
-    ).hexdigest()
+    expected = "sha256=" + hmac.new(secret.encode(), payload_body, hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(expected, signature_header):
         raise HTTPException(status_code=401, detail="Invalid signature")

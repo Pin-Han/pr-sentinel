@@ -1,4 +1,4 @@
-from src.github.diff import MAX_DIFF_CHARS, ProcessedDiff, process_diff
+from src.github.diff import MAX_DIFF_CHARS, process_diff
 
 
 def _make_file(name: str, patch_size: int = 100) -> dict:

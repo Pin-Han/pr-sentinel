@@ -1,11 +1,10 @@
 import hashlib
 import hmac
-import json
 
 import pytest
 from fastapi import HTTPException
 
-from src.github.webhook import ALLOWED_ACTIONS, PREvent, verify_signature
+from src.github.webhook import ALLOWED_ACTIONS, verify_signature
 
 
 def _sign(payload: bytes, secret: str) -> str:

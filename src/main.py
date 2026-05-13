@@ -1,12 +1,16 @@
 import asyncio
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from google import genai
+from langgraph.types import Command
+from pydantic import BaseModel
 
 from src.agent.graph import build_graph
+from src.checkpointer import create_checkpointer
 from src.github.client import GitHubClient
 from src.github.webhook import PREvent, parse_webhook
 
@@ -18,8 +22,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PR Sentinel", version="0.1.0")
-
 # Global state
 _github: GitHubClient | None = None
 _llm: genai.Client | None = None
@@ -30,30 +32,31 @@ _graph = None
 _inflight: dict[tuple[str, int], tuple[str, asyncio.Task]] = {}
 
 
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global _github, _llm, _graph
 
-    github_token = os.environ["GITHUB_TOKEN"]
-    _github = GitHubClient(github_token)
+    _github = GitHubClient(os.environ["GITHUB_TOKEN"])
     _llm = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-    _graph = build_graph(_github, _llm)
-    logger.info("PR Sentinel started")
 
+    async with create_checkpointer() as checkpointer:
+        _graph = build_graph(_github, _llm, checkpointer=checkpointer)
+        logger.info("PR Sentinel started")
+        yield
 
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    if _github:
-        await _github.close()
+    await _github.close()
     # Cancel all in-flight tasks
     for _, (_, task) in _inflight.items():
         task.cancel()
     logger.info("PR Sentinel stopped")
 
 
+app = FastAPI(title="PR Sentinel", version="0.2.0", lifespan=lifespan)
+
+
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.2.0"}
 
 
 @app.post("/webhook/github")
@@ -79,8 +82,9 @@ def _schedule_review(event: PREvent) -> None:
             logger.info("Skipping duplicate event for %s #%d @ %s", *key, event.head_sha)
             return
         old_task.cancel()
-        logger.info("Cancelled stale review for %s #%d (old: %s, new: %s)",
-                     *key, old_sha, event.head_sha)
+        logger.info(
+            "Cancelled stale review for %s #%d (old: %s, new: %s)", *key, old_sha, event.head_sha
+        )
 
     task = asyncio.create_task(_run_review(event))
     _inflight[key] = (event.head_sha, task)
@@ -90,8 +94,9 @@ async def _run_review(event: PREvent) -> None:
     """Execute the review graph for a PR event."""
     key = (event.repo_full_name, event.pr_number)
     try:
-        logger.info("Starting review for %s #%d @ %s", event.repo_full_name,
-                     event.pr_number, event.head_sha)
+        logger.info(
+            "Starting review for %s #%d @ %s", event.repo_full_name, event.pr_number, event.head_sha
+        )
 
         initial_state = {
             "repo": event.repo_full_name,
@@ -103,7 +108,13 @@ async def _run_review(event: PREvent) -> None:
             "human_approved": None,
         }
 
-        await _graph.ainvoke(initial_state)
+        config = {
+            "configurable": {
+                "thread_id": f"{event.repo_full_name}:{event.pr_number}:{event.head_sha}",
+            }
+        }
+
+        await _graph.ainvoke(initial_state, config=config)
         logger.info("Completed review for %s #%d", event.repo_full_name, event.pr_number)
 
     except asyncio.CancelledError:
@@ -112,3 +123,51 @@ async def _run_review(event: PREvent) -> None:
         logger.exception("Review failed for %s #%d", event.repo_full_name, event.pr_number)
     finally:
         _inflight.pop(key, None)
+
+
+# ---------------------------------------------------------------------------
+# HitL resume & status endpoints
+# ---------------------------------------------------------------------------
+
+
+class ResumeRequest(BaseModel):
+    repo: str
+    pr_number: int
+    head_sha: str
+    approved: bool
+
+
+@app.post("/review/resume")
+async def resume_review(req: ResumeRequest) -> dict:
+    """Resume an interrupted high-risk review with human decision."""
+    thread_id = f"{req.repo}:{req.pr_number}:{req.head_sha}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    state = await _graph.aget_state(config)
+    if (
+        not state
+        or not state.tasks
+        or not any(hasattr(t, "interrupts") and t.interrupts for t in state.tasks)
+    ):
+        return {"status": "error", "message": "No interrupted review found for this thread"}
+
+    await _graph.ainvoke(Command(resume={"approved": req.approved}), config=config)
+    return {"status": "resumed", "approved": req.approved}
+
+
+@app.get("/review/status/{repo:path}/{pr_number}/{head_sha}")
+async def review_status(repo: str, pr_number: int, head_sha: str) -> dict:
+    """Check whether a review is interrupted (awaiting human approval)."""
+    thread_id = f"{repo}:{pr_number}:{head_sha}"
+    config = {"configurable": {"thread_id": thread_id}}
+
+    state = await _graph.aget_state(config)
+    if not state or not state.values:
+        return {"status": "not_found"}
+
+    interrupted = any(hasattr(t, "interrupts") and t.interrupts for t in (state.tasks or []))
+    if interrupted:
+        interrupt_data = state.tasks[0].interrupts[0].value
+        return {"status": "interrupted", "interrupt_data": interrupt_data}
+
+    return {"status": "completed"}

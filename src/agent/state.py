@@ -30,14 +30,12 @@ class PRReviewState(TypedDict, total=False):
     suggestions: list[Suggestion]
     summary: str
 
-    # -- Evaluation (Phase 2) --
-    score: int  # 0-10
-    revision_feedback: str
+    # -- Evaluation & flow control --
+    score: int  # 0-10, from evaluate_quality
+    revision_feedback: str  # evaluator feedback for retry
     retry_count: int  # default 0, max 2
-
-    # -- Flow control (Phase 3) --
-    is_high_risk: bool
-    human_approved: bool | None
+    is_high_risk: bool  # detected by evaluate_quality
+    human_approved: bool | None  # set by human_checkpoint
 
     # -- Output --
     review_body: str

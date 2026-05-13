@@ -7,7 +7,12 @@ class TestFormatReview:
             "repo": "owner/repo",
             "pr_number": 1,
             "issues": [
-                {"type": "bug", "severity": "high", "file": "src/main.py", "message": "Null check missing"},
+                {
+                    "type": "bug",
+                    "severity": "high",
+                    "file": "src/main.py",
+                    "message": "Null check missing",
+                },
             ],
             "suggestions": [
                 {"file": "src/utils.py", "suggestion": "Consider using a constant"},

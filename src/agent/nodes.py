@@ -1,9 +1,21 @@
+import json
 import logging
 
 from google import genai
 from google.genai import types
+from langgraph.types import interrupt
 
-from src.agent.prompts import ANALYZE_SYSTEM, ANALYZE_TOOL, ANALYZE_TOOL_CONFIG, ANALYZE_USER
+from src.agent.prompts import (
+    ANALYZE_SYSTEM,
+    ANALYZE_TOOL,
+    ANALYZE_TOOL_CONFIG,
+    ANALYZE_USER,
+    EVALUATE_SYSTEM,
+    EVALUATE_TOOL,
+    EVALUATE_TOOL_CONFIG,
+    EVALUATE_USER,
+    REVISE_USER,
+)
 from src.agent.state import PRReviewState
 from src.github.client import GitHubClient
 from src.github.diff import process_diff
@@ -117,8 +129,10 @@ def format_review(state: PRReviewState) -> dict:
 
     # Skipped files notice
     if skipped:
-        parts.append(f"---\n> \u26a0\ufe0f **Note**: {len(skipped)} file(s) were skipped "
-                      "(lockfiles, generated files, or exceeded token budget).")
+        parts.append(
+            f"---\n> \u26a0\ufe0f **Note**: {len(skipped)} file(s) were skipped "
+            "(lockfiles, generated files, or exceeded token budget)."
+        )
         parts.append("")
 
     parts.append("---")
@@ -145,3 +159,109 @@ async def post_review(state: PRReviewState, *, github: GitHubClient) -> dict:
         state["review_decision"],
     )
     return {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 nodes: evaluate, revise, human checkpoint
+# ---------------------------------------------------------------------------
+
+
+async def evaluate_quality(state: PRReviewState, *, llm: genai.Client) -> dict:
+    """Score the analysis quality 0-10 and detect high-risk patterns."""
+    user_prompt = EVALUATE_USER.format(
+        diff=state["diff"],
+        issues=json.dumps(state.get("issues", []), ensure_ascii=False),
+        suggestions=json.dumps(state.get("suggestions", []), ensure_ascii=False),
+        summary=state.get("summary", ""),
+    )
+
+    response = await llm.aio.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=EVALUATE_SYSTEM,
+            tools=[EVALUATE_TOOL],
+            tool_config=EVALUATE_TOOL_CONFIG,
+        ),
+    )
+
+    for part in response.candidates[0].content.parts:
+        if part.function_call and part.function_call.name == "submit_evaluation":
+            args = part.function_call.args
+            logger.info(
+                "Evaluation for %s #%d: score=%s, high_risk=%s",
+                state["repo"],
+                state["pr_number"],
+                args.get("score"),
+                args.get("is_high_risk"),
+            )
+            return {
+                "score": args.get("score", 5),
+                "revision_feedback": args.get("feedback", ""),
+                "is_high_risk": args.get("is_high_risk", False),
+            }
+
+    logger.warning("No function call in evaluation response, using fallback")
+    return {"score": 5, "revision_feedback": "Evaluation failed", "is_high_risk": False}
+
+
+async def revise_review(state: PRReviewState, *, llm: genai.Client) -> dict:
+    """Re-analyze the diff with evaluator feedback, incrementing retry_count."""
+    user_prompt = REVISE_USER.format(
+        revision_feedback=state.get("revision_feedback", ""),
+        score=state.get("score", 0),
+        pr_title=state["pr_title"],
+        pr_description=state.get("pr_description", ""),
+        changed_files=", ".join(state.get("changed_files", [])),
+        diff=state["diff"],
+    )
+
+    response = await llm.aio.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=ANALYZE_SYSTEM,
+            tools=[ANALYZE_TOOL],
+            tool_config=ANALYZE_TOOL_CONFIG,
+        ),
+    )
+
+    for part in response.candidates[0].content.parts:
+        if part.function_call and part.function_call.name == "submit_review":
+            args = part.function_call.args
+            logger.info(
+                "Revised analysis for %s #%d (retry %d)",
+                state["repo"],
+                state["pr_number"],
+                state.get("retry_count", 0) + 1,
+            )
+            return {
+                "issues": args.get("issues", []),
+                "suggestions": args.get("suggestions", []),
+                "summary": args.get("summary", ""),
+                "retry_count": state.get("retry_count", 0) + 1,
+            }
+
+    logger.warning("No function call in revision response, returning empty analysis")
+    return {
+        "issues": [],
+        "suggestions": [],
+        "summary": "Revised analysis could not be completed.",
+        "retry_count": state.get("retry_count", 0) + 1,
+    }
+
+
+def human_checkpoint(state: PRReviewState) -> dict:
+    """Pause execution for human approval on high-risk PRs."""
+    approval = interrupt(
+        {
+            "type": "high_risk_review",
+            "repo": state["repo"],
+            "pr_number": state["pr_number"],
+            "pr_title": state["pr_title"],
+            "score": state.get("score"),
+            "issues_count": len(state.get("issues", [])),
+            "message": f"High-risk PR requires approval: {state['repo']} #{state['pr_number']}",
+        }
+    )
+    return {"human_approved": approval.get("approved", False)}
