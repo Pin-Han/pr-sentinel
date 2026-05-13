@@ -1,18 +1,41 @@
+import logging
 import os
+import sqlite3
 from pathlib import Path
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
+logger = logging.getLogger(__name__)
+
+_CANDIDATES = [
+    "/data/checkpoints.db",       # Railway persistent volume
+    "/tmp/checkpoints.db",        # Ephemeral fallback on Railway/containers
+]
+
 
 def _default_db_path() -> str:
-    """Return the checkpoint DB path, falling back to local .data/ for development."""
-    path = os.getenv("CHECKPOINT_DB_PATH", "/data/checkpoints.db")
-    parent = Path(path).parent
-    if parent.exists() and os.access(parent, os.W_OK):
-        return path
-    # Fallback for local development where /data is not available
+    """Pick the first writable checkpoint DB path by actually trying to open SQLite."""
+    override = os.getenv("CHECKPOINT_DB_PATH")
+    if override:
+        Path(override).parent.mkdir(parents=True, exist_ok=True)
+        return override
+
+    for candidate in _CANDIDATES:
+        parent = Path(candidate).parent
+        try:
+            parent.mkdir(parents=True, exist_ok=True)
+            # Actually try opening SQLite — the only reliable writability check
+            conn = sqlite3.connect(candidate)
+            conn.close()
+            logger.info("Using checkpoint DB at %s", candidate)
+            return candidate
+        except (OSError, sqlite3.OperationalError):
+            continue
+
+    # Last resort: project-local .data/
     local = Path(__file__).resolve().parent.parent / ".data" / "checkpoints.db"
     local.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Using checkpoint DB at %s", local)
     return str(local)
 
 
