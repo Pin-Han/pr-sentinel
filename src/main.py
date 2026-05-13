@@ -62,11 +62,22 @@ async def health() -> dict:
 @app.post("/webhook/github")
 async def webhook_handler(request: Request) -> dict:
     webhook_secret = os.environ["GITHUB_WEBHOOK_SECRET"]
+    event_type = request.headers.get("X-GitHub-Event", "unknown")
+    logger.info("Webhook received: event_type=%s", event_type)
+
     event = await parse_webhook(request, webhook_secret)
 
     if event is None:
+        logger.info("Webhook ignored (not a relevant PR event)")
         return {"status": "ignored"}
 
+    logger.info(
+        "Webhook accepted: %s #%d (%s) @ %s",
+        event.repo_full_name,
+        event.pr_number,
+        event.action,
+        event.head_sha,
+    )
     _schedule_review(event)
     return {"status": "accepted"}
 
