@@ -14,9 +14,6 @@ venv/
 data/
 .data/
 
-# Internal docs (not published to GitHub)
-docs/
-
 # IDE
 .idea/
 .vscode/
