@@ -48,7 +48,7 @@ async def analyze_code(state: PRReviewState, *, llm: genai.Client) -> dict:
     )
 
     response = await llm.aio.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=user_prompt,
         config=types.GenerateContentConfig(
             system_instruction=ANALYZE_SYSTEM,
@@ -176,7 +176,7 @@ async def evaluate_quality(state: PRReviewState, *, llm: genai.Client) -> dict:
     )
 
     response = await llm.aio.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=user_prompt,
         config=types.GenerateContentConfig(
             system_instruction=EVALUATE_SYSTEM,
@@ -217,7 +217,7 @@ async def revise_review(state: PRReviewState, *, llm: genai.Client) -> dict:
     )
 
     response = await llm.aio.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-flash-lite",
         contents=user_prompt,
         config=types.GenerateContentConfig(
             system_instruction=ANALYZE_SYSTEM,
